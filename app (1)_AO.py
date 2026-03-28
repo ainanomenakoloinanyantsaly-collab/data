@@ -375,15 +375,7 @@ elif st.session_state["page"] == "Credit Score":
                 f"Area: {farmer['area']} ha  |  "
                 f"Yield: {farmer['yield_t']} t/ha"
             )
-            # Harvest value always visible
-            hv = harvest_value(farmer["area"], farmer["yield_t"], farmer["crop"])
-            st.markdown(
-                f"<div class='harvest-info'>"
-                f"Estimated harvest value: <strong>{int(hv):,} Ar</strong>"
-                f" &nbsp;·&nbsp; {farmer['area']} ha × {farmer['yield_t']} t/ha"
-                f" × {CROP_PRICES_AR.get(farmer['crop'],1000):,} Ar/kg"
-                f"</div>",
-                unsafe_allow_html=True
+
             )
         with col_score:
             st.markdown(f"<div class='score-big' style='color:{color}'>{score}</div>",
