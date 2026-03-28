@@ -374,9 +374,8 @@ elif st.session_state["page"] == "Credit Score":
                 f"Crop: {farmer['crop']}  |  "
                 f"Area: {farmer['area']} ha  |  "
                 f"Yield: {farmer['yield_t']} t/ha"
-            )
+            )            # Harvest value always visible
 
-            )
         with col_score:
             st.markdown(f"<div class='score-big' style='color:{color}'>{score}</div>",
                         unsafe_allow_html=True)
