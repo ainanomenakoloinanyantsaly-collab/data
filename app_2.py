@@ -31,19 +31,19 @@ st.markdown("""
 
 # ─── REGIONS & CROPS ───────────────────────────────────────────────────────────
 REGIONS = {
-    "SAVA":             {"specialties": ["Vanilla", "Cloves", "Coffee"],           "climate": "tropical_humid"},
-    "Diana":            {"specialties": ["Cocoa", "Sugarcane", "Pepper"],          "climate": "tropical_dry"},
-    "Analanjirofo":     {"specialties": ["Cloves", "Lychees"],                     "climate": "equatorial"},
-    "Atsinanana":       {"specialties": ["Coffee", "Tropical Fruits"],             "climate": "tropical_humid"},
-    "Vakinankaratra":   {"specialties": ["Potatoes", "Dairy Farming", "Maize"],    "climate": "temperate"},
-    "Analamanga":       {"specialties": ["Vegetables", "Rice"],                    "climate": "temperate"},
+    "SAVA":             {"specialties": ["Vanilla", "Cloves", "Coffee"],              "climate": "tropical_humid"},
+    "Diana":            {"specialties": ["Cocoa", "Sugarcane", "Pepper"],             "climate": "tropical_dry"},
+    "Analanjirofo":     {"specialties": ["Cloves", "Lychees"],                        "climate": "equatorial"},
+    "Atsinanana":       {"specialties": ["Coffee", "Tropical Fruits"],                "climate": "tropical_humid"},
+    "Vakinankaratra":   {"specialties": ["Potatoes", "Dairy Farming", "Maize"],       "climate": "temperate"},
+    "Analamanga":       {"specialties": ["Vegetables", "Rice"],                       "climate": "temperate"},
     "Itasy":            {"specialties": ["Pineapple", "Avocado", "Tomatoes", "Rice"], "climate": "temperate"},
-    "Alaotra-Mangoro":  {"specialties": ["Rice"],                                  "climate": "tropical_altitude"},
-    "Boeny":            {"specialties": ["Rice", "Cashew Nuts"],                   "climate": "tropical_dry"},
-    "Menabe":           {"specialties": ["Sugarcane", "Maize", "Cowpeas"],         "climate": "tropical_dry"},
-    "Atsimo-Andrefana": {"specialties": ["Maize", "Cotton", "Cassava"],            "climate": "semi_arid"},
-    "Androy":           {"specialties": ["Livestock", "Sisal", "Cassava"],         "climate": "arid"},
-    "Anosy":            {"specialties": ["Livestock", "Sisal", "Cassava"],         "climate": "arid"},
+    "Alaotra-Mangoro":  {"specialties": ["Rice"],                                     "climate": "tropical_altitude"},
+    "Boeny":            {"specialties": ["Rice", "Cashew Nuts"],                      "climate": "tropical_dry"},
+    "Menabe":           {"specialties": ["Sugarcane", "Maize", "Cowpeas"],            "climate": "tropical_dry"},
+    "Atsimo-Andrefana": {"specialties": ["Maize", "Cotton", "Cassava"],               "climate": "semi_arid"},
+    "Androy":           {"specialties": ["Livestock", "Sisal", "Cassava"],            "climate": "arid"},
+    "Anosy":            {"specialties": ["Livestock", "Sisal", "Cassava"],            "climate": "arid"},
 }
 
 CLIMATE_COMPATIBILITY = {
@@ -54,6 +54,13 @@ CLIMATE_COMPATIBILITY = {
     "tropical_altitude": ["Rice", "Maize", "Vegetables"],
     "semi_arid":         ["Maize", "Cassava", "Cotton", "Livestock"],
     "arid":              ["Cassava", "Livestock", "Sisal"],
+}
+
+# Regional multiplier applied to the loan base amount
+REGIONAL_MULTIPLIER = {
+    "specialty":   1.00,   # crop is a regional specialty      → full amount
+    "compatible":  0.75,   # crop is climate-compatible        → -25%
+    "unsuited":    0.40,   # crop is neither                   → -60%
 }
 
 # Market price per kg in Ariary
@@ -73,14 +80,14 @@ ALL_CROPS = sorted(CROP_PRICES_AR.keys())
 # ─── SESSION STATE ─────────────────────────────────────────────────────────────
 if "farmers" not in st.session_state:
     st.session_state["farmers"] = [
-        {"name": "Rakoto Jean-Pierre",   "region": "Alaotra-Mangoro", "crop": "Rice",
-         "area": 2.4, "yield_t": 4.2, "revenue": 3200000,
+        {"name": "Rakoto Jean-Pierre",  "region": "Alaotra-Mangoro", "crop": "Rice",
+         "area": 2.4, "yield_t": 4.2, "other_revenue": 500000,
          "financial_access": "Mobile Money", "cooperative": True,  "score": None, "segment": None, "loan": None},
-        {"name": "Rasoamanarivo Aina",   "region": "Vakinankaratra", "crop": "Maize",
-         "area": 1.1, "yield_t": 2.8, "revenue": 1100000,
+        {"name": "Rasoamanarivo Aina",  "region": "Vakinankaratra", "crop": "Maize",
+         "area": 1.1, "yield_t": 2.8, "other_revenue": 0,
          "financial_access": "Mobile Money", "cooperative": False, "score": None, "segment": None, "loan": None},
-        {"name": "Randria Miora",        "region": "Androy",         "crop": "Rice",
-         "area": 0.6, "yield_t": 1.5, "revenue": 400000,
+        {"name": "Randria Miora",       "region": "Androy",         "crop": "Rice",
+         "area": 0.6, "yield_t": 1.5, "other_revenue": 0,
          "financial_access": "None",         "cooperative": False, "score": None, "segment": None, "loan": None},
     ]
 if "current_farmer" not in st.session_state:
@@ -89,66 +96,74 @@ if "page" not in st.session_state:
     st.session_state["page"] = "Registration"
 
 
-# ─── SCORING LOGIC ─────────────────────────────────────────────────────────────
-def region_score(region, crop):
+# ─── HELPERS ───────────────────────────────────────────────────────────────────
+def get_region_fit(region, crop):
+    """Return fit category: 'specialty', 'compatible', or 'unsuited'."""
     if region not in REGIONS:
-        return 5
-    specialties = REGIONS[region]["specialties"]
+        return "compatible"
+    if crop in REGIONS[region]["specialties"]:
+        return "specialty"
     climate = REGIONS[region]["climate"]
-    if crop in specialties:
-        return 15
-    compatible = CLIMATE_COMPATIBILITY.get(climate, [])
-    if crop in compatible:
-        return 10
-    return 3
+    if crop in CLIMATE_COMPATIBILITY.get(climate, []):
+        return "compatible"
+    return "unsuited"
 
 
-def calculate_score(area, yield_t, revenue, financial_access, cooperative, region, crop=""):
+# ─── SCORING LOGIC ─────────────────────────────────────────────────────────────
+def calculate_score(area, yield_t, other_revenue, financial_access, cooperative, region, crop=""):
     """
-    Scoring — 100 pts total:
-      Annual Revenue         30 pts  (main repayment capacity)
-      Production (area×yield)30 pts  (harvest = natural guarantee)
-      Region / Crop Fit      15 pts  (agricultural context)
-      Financial Access       15 pts  (traceability & trust)
-      Cooperative Membership 10 pts  (collective guarantee)
+    New scoring — 100 pts total:
+      Production (area × yield)   35 pts  — verifiable field data, main harvest guarantee
+      Region / Crop Fit           25 pts  — direct impact on harvest success
+      Financial Access            20 pts  — traceability & repayment channel
+      Cooperative Membership      10 pts  — collective guarantee
+      Other Revenues (optional)   10 pts  — bonus, non-verifiable
     """
     score = 0
     details = {}
 
-    # 1 — Annual Revenue (30 pts)
-    if revenue > 5_000_000:   p1 = 30
-    elif revenue > 2_000_000: p1 = 22
-    elif revenue > 500_000:   p1 = 12
-    else:                     p1 = 0
-    score += p1
-    details["Annual Revenue"] = (p1, 30)
-
-    # 2 — Production (30 pts)
+    # 1 — Production (35 pts)
     production = area * yield_t
-    if production > 10:   p2 = 30
-    elif production > 5:  p2 = 22
-    elif production > 2:  p2 = 12
-    else:                 p2 = 0
+    if production > 10:   p1 = 35
+    elif production > 5:  p1 = 26
+    elif production > 2:  p1 = 14
+    else:                 p1 = 0
+    score += p1
+    details["Production (area × yield)"] = (p1, 35)
+
+    # 2 — Region / Crop Fit (25 pts)
+    fit = get_region_fit(region, crop)
+    if fit == "specialty":
+        p2, fit_label = 25, "✅ Regional specialty"
+    elif fit == "compatible":
+        p2, fit_label = 16, "⚠️ Climate-compatible"
+    else:
+        p2, fit_label = 4,  "❌ Poorly adapted"
     score += p2
-    details["Production (area × yield)"] = (p2, 30)
+    details[f"Region / Crop Fit ({fit_label})"] = (p2, 25)
 
-    # 3 — Region / Crop Fit (15 pts)
-    p3 = region_score(region, crop)
-    r_label = "✅ Regional specialty" if p3 == 15 else ("⚠️ Climate-compatible" if p3 == 10 else "❌ Poorly adapted")
+    # 3 — Financial Access (20 pts)
+    if financial_access == "Bank Account":   p3 = 20
+    elif financial_access == "Mobile Money": p3 = 12
+    else:                                    p3 = 0
     score += p3
-    details[f"Region / Crop Fit ({r_label})"] = (p3, 15)
+    details["Financial Access (bank / mobile)"] = (p3, 20)
 
-    # 4 — Financial Access (15 pts)
-    if financial_access == "Bank Account":  p4 = 15
-    elif financial_access == "Mobile Money": p4 = 9
-    else:                                    p4 = 0
+    # 4 — Cooperative Membership (10 pts)
+    p4 = 10 if cooperative else 0
     score += p4
-    details["Financial Access (bank/mobile)"] = (p4, 15)
+    details["Cooperative Membership"] = (p4, 10)
 
-    # 5 — Cooperative Membership (10 pts)
-    p5 = 10 if cooperative else 0
+    # 5 — Other Revenues (10 pts, optional)
+    if other_revenue and other_revenue > 0:
+        if other_revenue > 3_000_000:   p5 = 10
+        elif other_revenue > 1_000_000: p5 = 7
+        elif other_revenue > 300_000:   p5 = 4
+        else:                           p5 = 1
+    else:
+        p5 = 0
     score += p5
-    details["Cooperative Membership"] = (p5, 10)
+    details["Other Revenues (optional bonus)"] = (p5, 10)
 
     return score, details
 
@@ -163,41 +178,54 @@ def get_segment(score):
 
 
 # ─── LOAN ESTIMATION ───────────────────────────────────────────────────────────
-def estimate_loan(area, yield_t, revenue, financial_access, cooperative, segment_label, crop):
+def estimate_loan(area, yield_t, other_revenue, financial_access, cooperative, segment_label, region, crop):
     """
-    Loan estimation:
-      Base = MIN(30% of annual revenue, 1/4 of harvest value)
-      x segment multiplier (A=100%, B=60%, C=not eligible)
+    New loan estimation:
+
+      Harvest component  = (area × yield × 1000 × price_per_kg) / 4
+                           × regional_multiplier          ← region drives the ceiling
+      Other revenue comp = other_revenue × 20%            ← optional, non-verifiable
+
+      Base = harvest_component + other_revenue_component  ← additive, not min/avg
+
+      × segment multiplier (A=100%, B=60%, C=not eligible)
       + bonuses: bank account +10%, mobile money +5%, cooperative +10%
     """
+    if "C" in segment_label:
+        return None
+
     price_per_kg = CROP_PRICES_AR.get(crop, 1000)
+    fit = get_region_fit(region, crop)
+    reg_multiplier = REGIONAL_MULTIPLIER[fit]
 
-    approach_revenue = revenue * 0.30
-
+    # Harvest component
     if price_per_kg > 0:
         harvest_value = area * yield_t * 1000 * price_per_kg
-        approach_harvest = harvest_value / 4
+        harvest_component = (harvest_value / 4) * reg_multiplier
     else:
         harvest_value = 0
-        approach_harvest = approach_revenue  # livestock/dairy: use revenue only
+        harvest_component = 0
 
-    base = min(approach_revenue, approach_harvest)
+    # Other revenue component (optional)
+    other_component = (other_revenue * 0.20) if (other_revenue and other_revenue > 0) else 0
 
+    base = harvest_component + other_component
+
+    # Segment multiplier
     if "A" in segment_label:
         multiplier = 1.0
         rate = "14%"
         duration = "Up to 36 months"
         repayment = "Flexible (end of harvest)"
-    elif "B" in segment_label:
+    else:  # B
         multiplier = 0.60
         rate = "20%"
         duration = "Up to 12 months"
         repayment = "Monthly installments"
-    else:
-        return None  # Segment C: not eligible
 
     amount = base * multiplier
 
+    # Bonuses
     bonus = 0
     bonus_breakdown = []
     if financial_access == "Bank Account":
@@ -216,19 +244,21 @@ def estimate_loan(area, yield_t, revenue, financial_access, cooperative, segment
     final_amount = amount + bonus
 
     return {
-        "approach_revenue": approach_revenue,
-        "approach_harvest": approach_harvest,
-        "harvest_value": harvest_value,
-        "price_per_kg": price_per_kg,
-        "base_amount": base,
-        "segment_multiplier": multiplier,
+        "harvest_value":        harvest_value,
+        "harvest_component":    harvest_component,
+        "reg_multiplier":       reg_multiplier,
+        "fit":                  fit,
+        "price_per_kg":         price_per_kg,
+        "other_component":      other_component,
+        "base_amount":          base,
+        "segment_multiplier":   multiplier,
         "amount_after_segment": amount,
-        "bonus_breakdown": bonus_breakdown,
-        "total_bonus": bonus,
-        "final_amount": final_amount,
-        "rate": rate,
-        "duration": duration,
-        "repayment": repayment,
+        "bonus_breakdown":      bonus_breakdown,
+        "total_bonus":          bonus,
+        "final_amount":         final_amount,
+        "rate":                 rate,
+        "duration":             duration,
+        "repayment":            repayment,
     }
 
 
@@ -236,12 +266,12 @@ def get_loan_offers(segment_label, final_amount):
     amt = int(final_amount)
     if "A" in segment_label:
         return [
-            {"institution": "CECAM",         "product": "Input Credit",
-             "amount": f"{amt:,} Ar",              "duration": "12 months", "rate": "14%", "repayment": "End of harvest"},
-            {"institution": "BOA Madagascar", "product": "Equipment Loan",
-             "amount": f"{min(amt*3,5000000):,} Ar","duration": "36 months", "rate": "18%", "repayment": "Monthly"},
-            {"institution": "MicroCred",      "product": "Working Capital",
-             "amount": f"{int(amt*0.6):,} Ar",     "duration": "6 months",  "rate": "22%", "repayment": "Mobile money"},
+            {"institution": "CECAM",          "product": "Input Credit",
+             "amount": f"{amt:,} Ar",               "duration": "12 months", "rate": "14%", "repayment": "End of harvest"},
+            {"institution": "BOA Madagascar",  "product": "Equipment Loan",
+             "amount": f"{min(amt*3,5000000):,} Ar", "duration": "36 months", "rate": "18%", "repayment": "Monthly"},
+            {"institution": "MicroCred",       "product": "Working Capital",
+             "amount": f"{int(amt*0.6):,} Ar",      "duration": "6 months",  "rate": "22%", "repayment": "Mobile money"},
         ]
     elif "B" in segment_label:
         return [
@@ -254,16 +284,20 @@ def get_loan_offers(segment_label, final_amount):
 def compute_farmer(f):
     """Compute score, segment, and loan for a farmer if not already done."""
     if f.get("score") is None:
-        score, details = calculate_score(f["area"], f["yield_t"], f["revenue"],
-                                         f["financial_access"], f["cooperative"],
-                                         f["region"], f.get("crop", ""))
-        f["score"] = score
+        score, details = calculate_score(
+            f["area"], f["yield_t"], f.get("other_revenue", 0),
+            f["financial_access"], f["cooperative"],
+            f["region"], f.get("crop", "")
+        )
+        f["score"]   = score
         f["details"] = details
         seg_label, _, _ = get_segment(score)
         f["segment"] = seg_label[0]
-        f["loan"] = estimate_loan(f["area"], f["yield_t"], f["revenue"],
-                                  f["financial_access"], f["cooperative"],
-                                  seg_label, f.get("crop", ""))
+        f["loan"]    = estimate_loan(
+            f["area"], f["yield_t"], f.get("other_revenue", 0),
+            f["financial_access"], f["cooperative"],
+            seg_label, f["region"], f.get("crop", "")
+        )
     return f
 
 
@@ -272,9 +306,11 @@ with st.sidebar:
     st.markdown('<div class="header-logo">🌱 CreditWorthy</div>', unsafe_allow_html=True)
     st.caption("Agricultural Credit Platform · Madagascar")
     st.divider()
-    page = st.radio("Navigation",
-                    ["Registration", "Credit Score", "Lender Portal"],
-                    index=["Registration", "Credit Score", "Lender Portal"].index(st.session_state["page"]))
+    page = st.radio(
+        "Navigation",
+        ["Registration", "Credit Score", "Lender Portal"],
+        index=["Registration", "Credit Score", "Lender Portal"].index(st.session_state["page"])
+    )
     st.session_state["page"] = page
     st.divider()
     st.caption(f"👥 {len(st.session_state['farmers'])} farmers registered")
@@ -291,14 +327,13 @@ if st.session_state["page"] == "Registration":
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Identity")
-            name = st.text_input("Full Name *", placeholder="e.g. Rakoto Jean-Pierre")
+            name   = st.text_input("Full Name *", placeholder="e.g. Rakoto Jean-Pierre")
             region = st.selectbox("Region", list(REGIONS.keys()))
-            crop = st.selectbox("Main Crop", ALL_CROPS)
+            crop   = st.selectbox("Main Crop", ALL_CROPS)
         with col2:
             st.subheader("Farm Data")
-            area = st.number_input("Cultivated Area (hectares) *", min_value=0.1, max_value=100.0, value=1.0, step=0.1)
+            area    = st.number_input("Cultivated Area (hectares) *", min_value=0.1, max_value=100.0, value=1.0, step=0.1)
             yield_t = st.number_input("Estimated Yield (tonnes/ha)", min_value=0.1, max_value=20.0, value=2.0, step=0.1)
-            revenue = st.number_input("Estimated Annual Revenue (Ariary)", min_value=0, max_value=50_000_000, value=1_000_000, step=100_000)
 
         st.subheader("Financial Profile")
         col3, col4 = st.columns(2)
@@ -307,21 +342,34 @@ if st.session_state["page"] == "Registration":
         with col4:
             cooperative = st.checkbox("Member of an agricultural cooperative")
 
-        submitted = st.form_submit_button("🔍 Calculate Score & Loan Estimate",
-                                          use_container_width=True, type="primary")
+        st.subheader("Other Revenues (optional)")
+        st.caption("Non-agricultural income: small trade, seasonal work, family transfers, etc.")
+        other_revenue = st.number_input(
+            "Other Annual Revenues (Ariary) — leave at 0 if none",
+            min_value=0, max_value=50_000_000, value=0, step=100_000
+        )
+
+        submitted = st.form_submit_button(
+            "🔍 Calculate Score & Loan Estimate",
+            use_container_width=True, type="primary"
+        )
 
     if submitted:
         if not name:
             st.error("Please enter a name.")
         else:
-            score, details = calculate_score(area, yield_t, revenue, financial_access,
-                                             cooperative, region, crop)
+            score, details = calculate_score(
+                area, yield_t, other_revenue,
+                financial_access, cooperative, region, crop
+            )
             segment_label, color, bg = get_segment(score)
-            loan = estimate_loan(area, yield_t, revenue, financial_access,
-                                 cooperative, segment_label, crop)
+            loan = estimate_loan(
+                area, yield_t, other_revenue,
+                financial_access, cooperative, segment_label, region, crop
+            )
             farmer = {
                 "name": name, "region": region, "crop": crop,
-                "area": area, "yield_t": yield_t, "revenue": revenue,
+                "area": area, "yield_t": yield_t, "other_revenue": other_revenue,
                 "financial_access": financial_access, "cooperative": cooperative,
                 "score": score, "segment": segment_label[0],
                 "details": details, "loan": loan,
@@ -344,7 +392,7 @@ elif st.session_state["page"] == "Credit Score":
 
     if farmer is None:
         st.info("No active profile. Select a farmer below or register a new one.")
-        names = [f["name"] for f in st.session_state["farmers"]]
+        names  = [f["name"] for f in st.session_state["farmers"]]
         choice = st.selectbox("Select a farmer", names)
         if st.button("View Score"):
             farmer = next(f for f in st.session_state["farmers"] if f["name"] == choice)
@@ -352,18 +400,21 @@ elif st.session_state["page"] == "Credit Score":
             st.session_state["current_farmer"] = farmer
             st.rerun()
     else:
-        farmer = compute_farmer(farmer)
-        score = farmer["score"]
+        farmer        = compute_farmer(farmer)
+        score         = farmer["score"]
         segment_label, color, bg = get_segment(score)
-        details = farmer.get("details", {})
-        loan = farmer.get("loan")
-        offers = get_loan_offers(segment_label, loan["final_amount"]) if loan else []
+        details       = farmer.get("details", {})
+        loan          = farmer.get("loan")
+        offers        = get_loan_offers(segment_label, loan["final_amount"]) if loan else []
 
         # ── Header
         col_info, col_score = st.columns([2, 1])
         with col_info:
             st.markdown(f"### 👤 {farmer['name']}")
-            st.caption(f"📍 {farmer['region']} · 🌾 {farmer['crop']} · {farmer['area']} ha · {farmer['financial_access']}")
+            st.caption(
+                f"📍 {farmer['region']} · 🌾 {farmer['crop']} · "
+                f"{farmer['area']} ha · {farmer['financial_access']}"
+            )
         with col_score:
             st.markdown(f"<div class='score-big' style='color:{color}'>{score}</div>", unsafe_allow_html=True)
             st.markdown("<div class='score-label'>points out of 100</div>", unsafe_allow_html=True)
@@ -371,7 +422,8 @@ elif st.session_state["page"] == "Credit Score":
                 f"<div style='text-align:center;margin-top:8px;'>"
                 f"<span style='background:{bg};color:{color};padding:6px 18px;border-radius:20px;"
                 f"font-weight:600;font-size:15px;'>Segment {segment_label}</span></div>",
-                unsafe_allow_html=True)
+                unsafe_allow_html=True
+            )
 
         st.divider()
         col_left, col_right = st.columns(2)
@@ -388,11 +440,11 @@ elif st.session_state["page"] == "Credit Score":
                 mode="gauge+number", value=score,
                 gauge={
                     "axis": {"range": [0, 100]},
-                    "bar": {"color": color},
+                    "bar":  {"color": color},
                     "steps": [
-                        {"range": [0, 44],  "color": "#fdecea"},
-                        {"range": [45, 69], "color": "#fff3dc"},
-                        {"range": [70, 100],"color": "#e0f7ee"},
+                        {"range": [0,  44],  "color": "#fdecea"},
+                        {"range": [45, 69],  "color": "#fff3dc"},
+                        {"range": [70, 100], "color": "#e0f7ee"},
                     ],
                 },
                 number={"suffix": "/100", "font": {"size": 32}}
@@ -404,6 +456,11 @@ elif st.session_state["page"] == "Credit Score":
         with col_right:
             st.subheader("Estimated Loan Amount")
             if loan:
+                fit_labels = {
+                    "specialty":  "✅ Regional specialty (×100%)",
+                    "compatible": "⚠️ Climate-compatible (×75%)",
+                    "unsuited":   "❌ Poorly adapted (×40%)",
+                }
                 st.markdown(f"""
                 <div class='credit-box' style='background:{bg};'>
                     <div style='font-size:13px;color:{color};font-weight:600;margin-bottom:8px;'>
@@ -419,22 +476,36 @@ elif st.session_state["page"] == "Credit Score":
                 """, unsafe_allow_html=True)
 
                 with st.expander("📊 See calculation details"):
-                    st.markdown("**Step 1 — Two base approaches (we take the lower):**")
-                    st.markdown(f"- 30% of annual revenue → **{int(loan['approach_revenue']):,} Ar**")
+                    st.markdown("**Step 1 — Harvest component (main guarantee):**")
                     if loan["harvest_value"] > 0:
                         st.markdown(
                             f"- Harvest value ({farmer['crop']} @ {loan['price_per_kg']:,} Ar/kg) = "
-                            f"**{int(loan['harvest_value']):,} Ar** → ¼ = **{int(loan['approach_harvest']):,} Ar**"
+                            f"**{int(loan['harvest_value']):,} Ar** → ÷4 = **{int(loan['harvest_value']/4):,} Ar**"
                         )
-                    st.markdown(f"- ✅ Base = MIN of both → **{int(loan['base_amount']):,} Ar**")
+                        st.markdown(
+                            f"- Region multiplier ({fit_labels[loan['fit']]}) → "
+                            f"**{int(loan['harvest_component']):,} Ar**"
+                        )
+                    else:
+                        st.markdown("- Crop has no market price (livestock/dairy) → harvest component = 0")
+
+                    if loan["other_component"] > 0:
+                        st.divider()
+                        st.markdown("**Step 2 — Other revenues component (20% of declared):**")
+                        st.markdown(f"- **+{int(loan['other_component']):,} Ar**")
+
                     st.divider()
-                    st.markdown(f"**Step 2 — Segment multiplier ({int(loan['segment_multiplier']*100)}%):**")
+                    st.markdown(f"**Base = harvest + other revenues → {int(loan['base_amount']):,} Ar**")
+                    st.divider()
+                    st.markdown(f"**Step 3 — Segment multiplier ({int(loan['segment_multiplier']*100)}%):**")
                     st.markdown(f"- Amount after segment → **{int(loan['amount_after_segment']):,} Ar**")
+
                     if loan["bonus_breakdown"]:
                         st.divider()
-                        st.markdown("**Step 3 — Bonuses (financial access & cooperative):**")
+                        st.markdown("**Step 4 — Bonuses (financial access & cooperative):**")
                         for label, val in loan["bonus_breakdown"]:
                             st.markdown(f"- {label}: **+{int(val):,} Ar**")
+
                     st.divider()
                     st.markdown(f"**Final estimated loan: {int(loan['final_amount']):,} Ar**")
                     st.caption("⚠️ Indicative only. Final credit decision belongs to the lender.")
@@ -454,10 +525,10 @@ elif st.session_state["page"] == "Credit Score":
                 st.error("❌ This farmer is not eligible for formal credit.")
                 st.info("""
                 **Recommendations to improve the score:**
+                - Increase cultivated area or yield (+up to 35 pts)
+                - Grow crops suited to your region (+up to 25 pts)
+                - Open a mobile money account (+12 pts) or bank account (+20 pts)
                 - Join an agricultural cooperative (+10 pts)
-                - Open a mobile money account (+9 pts) or bank account (+15 pts)
-                - Increase cultivated area or yield (+up to 30 pts)
-                - Grow crops suited to your region (+up to 15 pts)
                 """)
 
         st.divider()
@@ -480,7 +551,6 @@ elif st.session_state["page"] == "Lender Portal":
     st.title("Lender Portal")
     st.caption("Overview of scored and pre-qualified farmers")
 
-    # Compute all farmers
     farmers = [compute_farmer(f) for f in st.session_state["farmers"]]
 
     # ── Metrics
@@ -503,8 +573,10 @@ elif st.session_state["page"] == "Lender Portal":
         available_regions = list(set(f["region"] for f in farmers))
         filter_region = st.multiselect("Filter by Region", available_regions, default=available_regions)
 
-    filtered = [f for f in farmers
-                if f.get("segment", "C") in filter_segment and f["region"] in filter_region]
+    filtered = [
+        f for f in farmers
+        if f.get("segment", "C") in filter_segment and f["region"] in filter_region
+    ]
 
     def seg_badge(seg):
         return {"A": "🟢 A", "B": "🟡 B", "C": "🔴 C"}.get(seg, "⚪")
@@ -514,14 +586,14 @@ elif st.session_state["page"] == "Lender Portal":
         return f"{int(l['final_amount']):,} Ar" if l else "Not eligible"
 
     df = pd.DataFrame([{
-        "Name": f["name"],
-        "Region": f["region"],
-        "Crop": f["crop"],
-        "Area (ha)": f["area"],
-        "Score": f["score"],
-        "Segment": seg_badge(f.get("segment", "C")),
-        "Revenue (Ar)": f"{f['revenue']:,}".replace(",", " "),
-        "Est. Loan": loan_display(f),
+        "Name":          f["name"],
+        "Region":        f["region"],
+        "Crop":          f["crop"],
+        "Area (ha)":     f["area"],
+        "Score":         f["score"],
+        "Segment":       seg_badge(f.get("segment", "C")),
+        "Other Rev. (Ar)": f"{f.get('other_revenue', 0):,}".replace(",", " "),
+        "Est. Loan":     loan_display(f),
     } for f in filtered])
 
     if df.empty:
@@ -547,15 +619,18 @@ elif st.session_state["page"] == "Lender Portal":
             st.markdown(f"**Region:** {fd['region']}")
             st.markdown(f"**Crop:** {fd['crop']}")
             st.markdown(f"**Area:** {fd['area']} ha")
-            st.markdown(f"**Annual Revenue:** {fd['revenue']:,} Ar".replace(",", " "))
             st.markdown(f"**Financial Access:** {fd['financial_access']}")
             st.markdown(f"**Cooperative:** {'Yes' if fd['cooperative'] else 'No'}")
+            other = fd.get("other_revenue", 0)
+            if other and other > 0:
+                st.markdown(f"**Other Revenues:** {other:,} Ar".replace(",", " "))
         with col_d2:
             st.markdown(
                 f"<div style='background:{bg_d};border-radius:12px;padding:20px;text-align:center;'>"
                 f"<div style='font-size:48px;font-weight:700;color:{color_d};'>{fd['score']}</div>"
                 f"<div style='font-size:14px;color:{color_d};font-weight:600;'>Segment {seg_d}</div>"
-                f"</div>", unsafe_allow_html=True)
+                f"</div>", unsafe_allow_html=True
+            )
             if loan_d:
                 st.success(f"💰 Estimated loan: **{int(loan_d['final_amount']):,} Ar**")
                 for o in get_loan_offers(seg_d, loan_d["final_amount"]):
