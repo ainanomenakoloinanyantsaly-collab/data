@@ -308,10 +308,6 @@ if st.session_state["page"] == "Registration":
                                       min_value=0.1, max_value=100.0, value=1.0, step=0.1)
             yield_t = st.number_input("Estimated Yield (tonnes/ha)",
                                       min_value=0.1, max_value=20.0,  value=2.0, step=0.1)
-            # Show live harvest value preview
-            hv_preview = harvest_value(area, yield_t, crop)
-            st.info(f"Estimated harvest value: **{int(hv_preview):,} Ar**\n\n"
-                    f"*({area} ha × {yield_t} t/ha × {CROP_PRICES_AR.get(crop,1000):,} Ar/kg)*")
 
         st.subheader("Financial Profile")
         col3, col4 = st.columns(2)
